@@ -1,10 +1,10 @@
 ---
-title: Assembly
-emoji: 🐠
-colorFrom: pink
+title: Assembly Production Dashboard
+emoji: 📊
+colorFrom: indigo
 colorTo: purple
-sdk: static
+sdk: docker
+app_port: 7860
 pinned: false
 ---
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
+Production Data Analysis website, Assembly Production Department. Sign-in required.

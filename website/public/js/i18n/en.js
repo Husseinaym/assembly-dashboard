@@ -1,0 +1,23 @@
+// All interface labels in one place. To add Arabic later, copy this file to ar.js, translate the values,
+// and switch the import in util.js. (Chart titles and analysis text come from the server in English.)
+export default {
+  appName: 'Production Data Analysis',
+  home: 'Home', defects: 'Defects', compliance: 'Compliance', safety: 'Safety', reports: 'Reports', admin: 'Admin',
+  overview: 'Overview', critical: 'Critical defects', czcf: 'CZCF', rework: 'Rework', mislocation: 'Mislocation (Total, Electrical)',
+  operators: 'Operators', newOperators: 'New operators', teamLeaders: 'Team leaders', camera: 'Camera cases',
+  areas: 'Areas', departments: 'Departments', items: 'Non-compliance items',
+  weekly: 'Weekly report', downloads: 'Downloads', upload: 'Upload', history: 'Upload history', settings: 'Settings',
+  period: 'Period', week: 'Week', day: 'Day', range: 'Custom range', mtd: 'Month to date', ytd: 'Year to date', all: 'All data to date',
+  compareWith: 'Compare with', cmpPrev: 'Previous period', cmpMonth: 'Same week last month', cmpCustom: 'Chosen period', cmpNone: 'No comparison',
+  facility: 'Facility', line: 'Line', location: 'Location', shift: 'Shift', tl: 'Team leader', team: 'Team', defect: 'Defect name', violation: 'Violation', item: 'Item',
+  dept: 'Department', area: 'Area', src: 'Source', op: 'Operator', found: 'Found at', station: 'Station',
+  prevWeek: 'Previous week', nextWeek: 'Next week', prevDay: 'Previous day', nextDay: 'Next day', clearAll: 'Clear filters', all_: 'All',
+  excel: 'Excel', pdf: 'PDF', print: 'Print', csv: 'CSV', png: 'PNG', viewData: 'Data', enlarge: 'Enlarge', back: 'Back',
+  login: 'Log in', logout: 'Log out', guest: 'Viewer (guest)', username: 'User name', password: 'Password',
+  dataUpTo: 'Data up to', lastUpload: 'Last upload', noData: 'No data yet', loading: 'Loading…',
+  presentation: 'Presentation mode', exitPresentation: 'Exit presentation',
+  emptyDefects: 'No defect data for this period. Upload the daily defects file (for example 12-11-2026.xlsx) in Admin › Upload.',
+  emptyCompliance: 'No compliance data for this period. Upload "Complaince Data.xlsx" in Admin › Upload.',
+  emptySafety: 'No safety data for this period. Upload "Safety_Compliance_Daily_Report.xlsx" in Admin › Upload.',
+  emptyHome: 'No data uploaded yet. An admin can upload the defects, compliance and safety files in Admin › Upload, or run the seed script to load demo data.',
+};

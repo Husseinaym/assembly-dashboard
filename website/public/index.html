@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assembly Production · Production Data Analysis</title>
+  <link rel="icon" href="/img/sews-e-icon.png" type="image/png">
+  <link rel="stylesheet" href="/css/app.css">
+  <script>try { var th = localStorage.getItem('pda-theme'); if (th) document.documentElement.setAttribute('data-theme', th); } catch (e) {}</script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar" role="banner">
+   <div class="topbar-main">
+    <button class="hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false" aria-controls="topnav">☰</button>
+    <a href="/" class="brand" data-link aria-label="Home">
+      <img src="/img/sews-e-logo-wide-white.png" alt="Sumitomo Electric Wiring Systems (Europe) Ltd" class="brand-logo">
+      <span class="brand-divider" aria-hidden="true"></span>
+      <span class="brand-text"><strong id="brand-company">Assembly Production Department</strong><span id="brand-sub">Production Data Analysis · 6th of October, Egypt</span></span>
+    </a>
+    <div class="top-tools">
+      <div class="search" role="search">
+        <input id="search" type="search" placeholder="Search facility, line, defect, operator…" aria-label="Search" autocomplete="off">
+        <div id="search-results" class="search-results" role="listbox" hidden></div>
+      </div>
+      <button class="icon-btn" id="btn-present" title="Presentation mode (full screen, pages rotate)" aria-label="Presentation mode">▶</button>
+      <button class="icon-btn" id="btn-theme" title="Light / dark mode" aria-label="Switch light or dark mode">◐</button>
+      <div id="user-box" class="user-box"></div>
+    </div>
+   </div>
+   <nav id="topnav" class="topnav" aria-label="Main"></nav>
+  </header>
+  <div class="subbar">
+    <nav id="breadcrumbs" class="breadcrumbs" aria-label="Breadcrumb"></nav>
+    <div id="present-bar" class="present-bar" hidden></div>
+  </div>
+  <section id="filterbar" class="filterbar" aria-label="Filters"></section>
+  <div class="layout">
+    <aside id="sidemenu" class="sidemenu" aria-label="Section pages"></aside>
+    <main id="main" class="main" tabindex="-1"></main>
+  </div>
+  <footer class="footer" id="footer"></footer>
+  <div id="modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-box">
+      <div class="modal-head"><h2 id="modal-title"></h2><button class="icon-btn" id="modal-close" aria-label="Close">✕</button></div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/vendor/echarts.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
