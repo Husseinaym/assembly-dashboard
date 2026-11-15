@@ -1,23 +1,26 @@
 // Renders the chart specs sent by the server with ECharts, plus tables, alerts and the panel frame (PNG / data / Excel).
-import { esc, fmt, fmtAuto, el, modal, t } from './util.js';
+import { esc, fmt, fmtAuto, el, modal, t, icon } from './util.js';
 
 // SEWS-E indigo and teal first, then distinct supporting colours
 const PALETTE = ['#1C1D96', '#00808C', '#f59e0b', '#e11d48', '#7c3aed', '#16a34a', '#0ea5e9', '#a16207', '#db2777', '#64748b', '#84cc16', '#2E008B'];
 const live = new Set();
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
-window.addEventListener('resize', () => { for (const c of live) if (!c.isDisposed()) c.resize(); });
+// On resize, rebuild the option too: label rotation depends on the chart width.
+let resizeTimer = null;
+window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { for (const c of live) if (!c.isDisposed()) { if (c.__spec) c.setOption(option(c.__spec, c.__ctx, c.getWidth()), true); c.resize(); } }, 120); });
 export function disposeAll() { for (const c of live) if (!c.isDisposed()) c.dispose(); live.clear(); }
-export function redrawAll() { for (const c of live) if (!c.isDisposed() && c.__spec) { const s = c.__spec, ctx = c.__ctx; c.setOption(option(s, ctx), true); } }
+export function redrawAll() { for (const c of live) if (!c.isDisposed() && c.__spec) { const s = c.__spec, ctx = c.__ctx; c.setOption(option(s, ctx, c.getWidth()), true); } }
 
 function base() {
   const text = css('--text'), muted = css('--muted'), border = css('--border');
   return {
-    textStyle: { fontFamily: 'Segoe UI, system-ui, Arial', color: text },
+    textStyle: { fontFamily: css('--font') || 'system-ui, Arial', color: text },
     grid: { left: 12, right: 18, top: 36, bottom: 12, containLabel: true },
     tooltip: { trigger: 'axis', confine: true, valueFormatter: v => (typeof v === 'number' ? fmtAuto(v) : v) },
     legend: { top: 4, textStyle: { color: muted }, type: 'scroll' },
-    _axis: { axisLine: { lineStyle: { color: border } }, axisLabel: { color: muted }, splitLine: { lineStyle: { color: border, type: 'dashed' } }, nameTextStyle: { color: muted } },
+    // Axis names start at the axis instead of being centred on it, so long names are never cut off.
+    _axis: { axisLine: { lineStyle: { color: border } }, axisLabel: { color: muted }, splitLine: { lineStyle: { color: border, type: 'dashed' } }, nameTextStyle: { color: muted, align: 'left' } },
   };
 }
 const ax = (b, o) => ({ ...b._axis, ...o, axisLabel: { ...b._axis.axisLabel, ...(o.axisLabel || {}) } });
@@ -25,31 +28,59 @@ const ax = (b, o) => ({ ...b._axis, ...o, axisLabel: { ...b._axis.axisLabel, ...
 function colorFor(name, i, ctx, colorBy) { if (colorBy === 'facility' && ctx.colors && ctx.colors[name]) return ctx.colors[name]; return colorBy === 'facility' ? '#94a3b8' : PALETTE[i % PALETTE.length]; }
 function shortLabel(s, n = 22) { s = String(s ?? ''); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 
+/** Value labels on bars: whole numbers as they are, others with one decimal ("7.2", not "7.20"). */
+const lbl = v => { v = typeof v === 'object' && v !== null ? v.value : v; if (v === null || v === undefined || v === '') return ''; return Number.isInteger(v) ? fmt(v) : fmt(v, 1); };
+
+/** Reference lines (targets, spec limits). A single value becomes a full-width line; LSL + USL also get a shaded spec band. */
 function markSeries(marks, n) {
-  return (marks || []).filter(m => m.value !== null && m.value !== undefined).map(m => ({
-    name: m.name, type: 'line', data: Array.isArray(m.value) ? m.value : Array(n).fill(m.value), symbol: 'none', lineStyle: { type: 'dashed', width: 2, color: m.color }, itemStyle: { color: m.color }, z: 5,
-    endLabel: { show: true, formatter: `${m.name}`, color: m.color, fontSize: 11 },
-  }));
+  const list = (marks || []).filter(m => m.value !== null && m.value !== undefined);
+  const lsl = list.find(m => /^LSL/i.test(m.name) && !Array.isArray(m.value));
+  const usl = list.find(m => /^USL/i.test(m.name) && !Array.isArray(m.value));
+  return list.map(m => {
+    const color = m.color || '#64748b';
+    if (Array.isArray(m.value)) return { name: m.name, type: 'line', data: m.value, symbol: 'none', lineStyle: { type: 'dashed', width: 2, color }, itemStyle: { color }, z: 5, endLabel: { show: true, formatter: m.name, color, fontSize: 11 } };
+    return {
+      name: m.name, type: 'line', data: Array(n).fill(null), symbol: 'none', itemStyle: { color }, lineStyle: { color, type: 'dashed' }, z: 5,
+      markLine: { silent: true, symbol: 'none', lineStyle: { color, type: 'dashed', width: 1.6 }, label: { formatter: `${m.name} ${fmtAuto(m.value)}`, position: 'insideEndTop', color, fontSize: 11 }, data: [{ yAxis: m.value }] },
+      markArea: m === usl && lsl ? { silent: true, itemStyle: { color: 'rgba(22,163,74,0.07)' }, data: [[{ yAxis: lsl.value }, { yAxis: usl.value }]] } : undefined,
+    };
+  });
+}
+/** Rotate category labels only when they would not fit side by side. */
+function needRotate(labels, width) {
+  if (!labels.length) return 0;
+  const longest = Math.min(18, Math.max(...labels.map(l => String(l ?? '').length)));
+  return labels.length * (longest * 7 + 12) > Math.max(200, (width || 600) - 90) ? 35 : 0;
+}
+/** The unfinished current week is drawn lighter with a dashed outline. */
+function partialItem(v, i, s, color) {
+  if (s.partialIndex !== i) return color ? { value: v, itemStyle: { color } } : v;
+  return { value: v, itemStyle: { color: color || undefined, opacity: 0.45, borderType: 'dashed', borderWidth: 1.5, borderColor: color || PALETTE[0] } };
 }
 
-export function option(s, ctx = {}) {
+export function option(s, ctx = {}, width = 0) {
   const b = base();
   const n = (s.x || []).length;
-  const showLabels = n <= 16;
-  const rotate = n > 8 ? 35 : 0;
+  const xLabels = (s.x || []).map((v, i) => (i === s.partialIndex ? v + '*' : v));
+  const rotate = needRotate(xLabels, width);
   if (s.type === 'line') {
-    const series = s.series.map((sr, i) => ({ name: sr.name, type: sr.type || 'line', data: sr.data, smooth: false, symbolSize: 6, itemStyle: { color: sr.color || PALETTE[i % PALETTE.length] }, label: { show: showLabels && s.series.length <= 2 && s.labels !== false, position: 'top', fontSize: 11, formatter: p => fmtAuto(p.value) }, barMaxWidth: 46 }));
-    return { ...b, xAxis: ax(b, { type: 'category', data: s.x, name: '', axisLabel: { rotate, interval: 'auto' } }), yAxis: ax(b, { type: 'value', name: s.yName, nameLocation: 'end' }), series: [...series, ...markSeries(s.marks, n)], legend: { ...b.legend, show: series.length + (s.marks || []).length > 1 } };
+    // Value labels only when they stay readable: up to 12 points, and on one series only (the bars when bars and lines are mixed).
+    const labelled = s.series.findIndex(sr => sr.type === 'bar') >= 0 ? s.series.findIndex(sr => sr.type === 'bar') : (s.series.length === 1 ? 0 : -1);
+    const series = s.series.map((sr, i) => {
+      const color = sr.color || PALETTE[i % PALETTE.length];
+      return { name: sr.name, type: sr.type || 'line', data: sr.data.map((v, j) => partialItem(v, j, s, null)), smooth: false, symbolSize: 6, itemStyle: { color }, label: { show: n <= 12 && i === labelled && s.labels !== false, position: 'top', fontSize: 11, formatter: p => lbl(p.value) }, barMaxWidth: 46 };
+    });
+    return { ...b, xAxis: ax(b, { type: 'category', data: xLabels, name: '', axisLabel: { rotate, interval: 'auto' } }), yAxis: ax(b, { type: 'value', name: s.yName, nameLocation: 'end' }), series: [...series, ...markSeries(s.marks, n)], legend: { ...b.legend, show: series.length + (s.marks || []).length > 1 } };
   }
   if (s.type === 'bar' || s.type === 'stacked') {
     const horiz = s.horizontal;
-    const cat = { type: 'category', data: s.x, axisLabel: { rotate: horiz ? 0 : rotate, formatter: v => shortLabel(v, horiz ? 28 : 16), interval: 0 }, inverse: horiz };
+    const cat = { type: 'category', data: xLabels, axisLabel: { rotate: horiz ? 0 : rotate, formatter: v => shortLabel(v, horiz ? 28 : 16), interval: horiz ? 0 : 'auto', hideOverlap: true }, inverse: horiz };
     const val = { type: 'value', name: s.yName };
     const series = s.series.map((sr, i) => ({
       name: sr.name, type: 'bar', stack: s.type === 'stacked' && !sr.nostack ? 'a' : undefined, barMaxWidth: 46,
-      data: s.type === 'bar' && s.colorBy ? sr.data.map((v, j) => ({ value: v, itemStyle: { color: colorFor(s.x[j], j, ctx, s.colorBy) } })) : sr.data,
+      data: sr.data.map((v, j) => partialItem(v, j, s, s.type === 'bar' && s.colorBy ? colorFor(s.x[j], j, ctx, s.colorBy) : null)),
       itemStyle: { color: s.type === 'stacked' ? colorFor(sr.name, i, ctx, s.colorBy) : (s.colorBy ? undefined : PALETTE[0]) },
-      label: { show: (s.type === 'bar' && n <= 30) || (s.type === 'stacked' && n <= 12 && s.series.length <= 4), position: s.type === 'stacked' && !sr.nostack ? 'inside' : horiz ? 'right' : 'top', fontSize: 11, formatter: p => (p.value ? fmtAuto(typeof p.value === 'object' ? p.value.value : p.value) : '') },
+      label: { show: (s.type === 'bar' && (horiz ? n <= 30 : n <= 15)) || (s.type === 'stacked' && n <= 10 && s.series.length <= 3), position: s.type === 'stacked' && !sr.nostack ? 'inside' : horiz ? 'right' : 'top', fontSize: 11, formatter: p => (p.value ? lbl(p.value) : '') },
     }));
     const h = horiz ? { yAxis: ax(b, cat), xAxis: ax(b, val) } : { xAxis: ax(b, cat), yAxis: ax(b, val) };
     return { ...b, ...h, series, legend: { ...b.legend, show: s.series.length > 1 }, tooltip: { ...b.tooltip, axisPointer: { type: 'shadow' } } };
@@ -58,7 +89,7 @@ export function option(s, ctx = {}) {
     return {
       ...b, legend: { ...b.legend, show: true },
       tooltip: { ...b.tooltip, formatter: ps => { const i = ps[0].dataIndex; const alt = s.alt && s.alt[s.x[i]]; return `<b>${esc(s.x[i])}</b>${alt ? `<div dir="rtl" style="max-width:320px;white-space:normal">${esc(alt)}</div>` : ''}<br>${esc(s.yName || 'Value')}: ${fmt(s.values[i])}<br>Cumulative: ${fmt(s.cum[i], 1)}%`; } },
-      xAxis: ax(b, { type: 'category', data: s.x, axisLabel: { rotate: n > 6 ? 35 : 0, interval: 0, formatter: v => shortLabel(v, 18) } }),
+      xAxis: ax(b, { type: 'category', data: s.x, axisLabel: { rotate: needRotate(s.x.map(v => shortLabel(v, 18)), width), interval: 0, formatter: v => shortLabel(v, 18) } }),
       yAxis: [ax(b, { type: 'value', name: s.yName }), ax(b, { type: 'value', name: 'Cumulative %', min: 0, max: 100, splitLine: { show: false }, axisLabel: { formatter: '{value}%' } })],
       series: [
         { name: s.yName || 'Value', type: 'bar', data: s.values, itemStyle: { color: PALETTE[0] }, barMaxWidth: 46, label: { show: n <= 20, position: 'top', fontSize: 11, formatter: p => fmt(p.value) } },
@@ -106,7 +137,7 @@ export function option(s, ctx = {}) {
 export function draw(div, s, ctx) {
   const c = echarts.init(div, null, { renderer: 'canvas' });
   c.__spec = s; c.__ctx = ctx;
-  c.setOption(option(s, ctx));
+  c.setOption(option(s, ctx, div.clientWidth));
   live.add(c);
   c.on('click', p => {
     if (!ctx.onDrill) return;
@@ -149,12 +180,12 @@ export function plainTableHTML(table) {
 export function panel(s, ctx, opts = {}) {
   const wide = s.wide || s.type === 'imr' || s.type === 'multiples' || opts.wide;
   const p = el(`<section class="panel${wide ? ' wide' : ''}" id="chart-${esc(s.id)}" aria-label="${esc(s.title)}">
-    <div class="panel-head"><div><h3>${esc(s.title)}</h3><div class="sub">${esc(ctx.period || '')}</div></div>
+    <div class="panel-head"><div><h2 class="panel-title">${esc(s.title)}</h2><div class="sub">${esc(ctx.period || '')}</div></div>
       <div class="panel-actions">
         ${['table', 'empty'].includes(s.type) ? '' : `<button data-act="png" title="Download PNG">${t('png')}</button>`}
         ${s.table && s.type !== 'table' ? `<button data-act="data" title="View the data behind the chart">${t('viewData')}</button>` : ''}
         ${s.table ? `<button data-act="xlsx" title="Export this data to Excel">${t('excel')}</button>` : ''}
-        ${opts.noEnlarge || s.type === 'empty' ? '' : `<button data-act="big" title="${t('enlarge')}">⤢</button>`}
+        ${opts.noEnlarge || s.type === 'empty' ? '' : `<button data-act="big" title="${t('enlarge')}" aria-label="${t('enlarge')}">${icon('expand', 14)}</button>`}
       </div></div></section>`);
   const body = document.createElement('div');
   p.append(body);
@@ -163,7 +194,7 @@ export function panel(s, ctx, opts = {}) {
   else if (s.type === 'table') {
     if (!s.rows.length) body.innerHTML = `<div class="empty">${esc(s.empty || 'No rows for this period.')}</div>`;
     else {
-      body.className = 'tbl-wrap'; body.innerHTML = tableHTML(s);
+      body.className = 'tbl-wrap'; body.tabIndex = 0; body.setAttribute('role', 'region'); body.setAttribute('aria-label', s.title); body.innerHTML = tableHTML(s);
       body.querySelector('tbody').addEventListener('click', e => {
         const tr = e.target.closest('tr'); if (!tr) return; const r = s.rows[+tr.dataset.i]; if (!r || r.total) return;
         if (r._drill && ctx.onRecords) return ctx.onRecords(r._drill);
@@ -173,7 +204,7 @@ export function panel(s, ctx, opts = {}) {
   } else if (s.type === 'multiples') {
     body.className = 'multiples';
     for (const m of s.charts) {
-      const box = el(`<div class="mini"><h4>${esc(m.title)}</h4><div class="chart"></div><p>${esc(m.analysis || '')}</p></div>`);
+      const box = el(`<div class="mini"><h3>${esc(m.title)}</h3><div class="chart"></div><p>${esc(m.analysis || '')}</p></div>`);
       body.append(box);
       setTimeout(() => draw(box.querySelector('.chart'), { ...m, labels: false }, ctx), 0);
     }
@@ -204,7 +235,7 @@ export function panel(s, ctx, opts = {}) {
     if (act === 'data') {
       let v = p.querySelector('.view-data');
       if (v) { v.remove(); return; }
-      v = el(`<div class="view-data tbl-wrap"></div>`); v.innerHTML = plainTableHTML(s.table); p.append(v);
+      v = el(`<div class="view-data tbl-wrap" tabindex="0" role="region" aria-label="${esc(s.title)}: data"></div>`); v.innerHTML = plainTableHTML(s.table); p.append(v);
     }
     if (act === 'xlsx') import('./export.js').then(x => x.chartToExcel(s, ctx));
     if (act === 'big') { const b = modal(s.title, null); const big = panel({ ...s, wide: true }, ctx, { noEnlarge: true }); b.append(big); const ch = big.querySelector('.chart'); if (ch) ch.style.height = '62vh'; }

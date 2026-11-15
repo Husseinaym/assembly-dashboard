@@ -1,5 +1,5 @@
 // App shell: routing (every page has its own URL), navigation, breadcrumbs, global filter bar, search, presentation mode.
-import { t, api, esc, el, fmt, dLabel, dtLabel, addDays, toast, closeModal } from './util.js';
+import { t, api, esc, el, fmt, dLabel, dtLabel, addDays, toast, closeModal, icon } from './util.js';
 import { disposeAll, redrawAll } from './charts.js';
 
 export const S = { meta: null, options: null, present: null, lastPage: null };
@@ -88,7 +88,7 @@ function renderNav(path) {
   nav.innerHTML = NAV.filter(n => !n.admin || isAdmin()).map(n => {
     if (n.path) return `<div class="nav-item"><a class="nav-link${path === n.path ? ' active' : ''}" href="${linkFor(n.path)}" data-link>${esc(n.label)}</a></div>`;
     const active = n.items.some(i => path === i[0] || path.startsWith(i[0] + '/'));
-    return `<div class="nav-item${active ? ' active' : ''}"><button class="nav-btn" aria-haspopup="true" aria-expanded="false">${esc(n.label)} ▾</button>
+    return `<div class="nav-item${active ? ' active' : ''}"><button class="nav-btn" aria-haspopup="true" aria-expanded="false">${esc(n.label)} ${icon('chevron', 14)}</button>
       <div class="dropdown" role="menu">${n.items.map(i => `<a role="menuitem" href="${linkFor(i[0])}" data-link class="${path === i[0] ? 'active' : ''}">${esc(i[1])}</a>`).join('')}</div></div>`;
   }).join('');
 }
@@ -136,7 +136,7 @@ function renderCrumbs(route, pageTitle) {
 // ---------- filter bar ----------
 function msel(key, label, options, values) {
   const sel = (values || '').split(',').filter(Boolean);
-  const box = el(`<div class="msel"><button class="btn" type="button" aria-haspopup="listbox" aria-expanded="false">${esc(label)}: <b>${sel.length ? (sel.length === 1 ? esc(sel[0].length > 18 ? sel[0].slice(0, 17) + '…' : sel[0]) : sel.length + ' selected') : t('all_')}</b> ▾</button></div>`);
+  const box = el(`<div class="msel"><button class="btn" type="button" aria-haspopup="listbox" aria-expanded="false">${esc(label)}: <b>${sel.length ? (sel.length === 1 ? esc(sel[0].length > 18 ? sel[0].slice(0, 17) + '…' : sel[0]) : sel.length + ' selected') : t('all_')}</b> ${icon('chevron', 14)}</button></div>`);
   const btn = box.querySelector('button');
   btn.addEventListener('click', e => {
     e.stopPropagation();
@@ -217,7 +217,7 @@ function renderFilters(route) {
     if (seg === 'safety') { const b = el(`<button class="btn" title="Focus on the Assembly department">${q.dept === 'Assembly' ? '✓ ' : ''}Assembly only</button>`); b.addEventListener('click', () => setParams({ dept: q.dept === 'Assembly' ? null : 'Assembly' })); row2.append(b); }
   }
   // chips
-  const chips = el('<div class="chips" aria-label="Active filters"><span class="chip period" id="period-chip"></span></div>');
+  const chips = el('<div class="chips" role="group" aria-label="Active filters"><span class="chip period" id="period-chip"></span></div>');
   const labels = { fac: t('facility'), line: seg === 'safety' ? t('location') : t('line'), shift: t('shift'), tl: seg === 'safety' ? t('team') : t('tl'), defect: seg === 'compliance' ? t('violation') : seg === 'safety' ? t('item') : t('defect'), dept: t('dept'), area: t('area'), src: t('src'), op: t('op'), found: t('found'), station: t('station') };
   let any = false;
   for (const k of LIST_KEYS) for (const v of (q[k] || '').split(',').filter(Boolean)) {
@@ -227,8 +227,15 @@ function renderFilters(route) {
     chips.append(c);
   }
   if (any) { const c = el(`<button class="btn small">${t('clearAll')}</button>`); c.addEventListener('click', () => { const p = {}; for (const k of LIST_KEYS) p[k] = null; setParams(p); }); chips.append(c); }
+  // On phones the controls fold into one "Filters" button so the data is visible without scrolling.
+  const active = LIST_KEYS.reduce((n, k) => n + (q[k] || '').split(',').filter(Boolean).length, 0);
+  const toggle = el(`<button class="btn filter-toggle" type="button" aria-expanded="${filtersOpen}" aria-controls="f-controls">${icon('filter')} ${t('filters')}${active ? ` <span class="count">${active}</span>` : ''}</button>`);
+  toggle.addEventListener('click', () => { filtersOpen = !filtersOpen; row1.classList.toggle('open', filtersOpen); toggle.setAttribute('aria-expanded', String(filtersOpen)); });
+  row1.id = 'f-controls'; row1.classList.add('fcontrols'); row1.classList.toggle('open', filtersOpen);
+  chips.prepend(toggle);
   fb.innerHTML = ''; fb.append(row1, chips);
 }
+let filtersOpen = false;
 export function setPeriodChip(page) {
   const c = document.getElementById('period-chip'); if (!c || !page.period) return;
   c.textContent = `${page.period.label}${page.compare ? ' · compared with ' + page.compare.label : ''}`;

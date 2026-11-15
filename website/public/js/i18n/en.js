@@ -11,7 +11,7 @@ export default {
   compareWith: 'Compare with', cmpPrev: 'Previous period', cmpMonth: 'Same week last month', cmpCustom: 'Chosen period', cmpNone: 'No comparison',
   facility: 'Facility', line: 'Line', location: 'Location', shift: 'Shift', tl: 'Team leader', team: 'Team', defect: 'Defect name', violation: 'Violation', item: 'Item',
   dept: 'Department', area: 'Area', src: 'Source', op: 'Operator', found: 'Found at', station: 'Station',
-  prevWeek: 'Previous week', nextWeek: 'Next week', prevDay: 'Previous day', nextDay: 'Next day', clearAll: 'Clear filters', all_: 'All',
+  prevWeek: 'Previous week', nextWeek: 'Next week', prevDay: 'Previous day', nextDay: 'Next day', clearAll: 'Clear filters', filters: 'Filters', all_: 'All',
   excel: 'Excel', pdf: 'PDF', print: 'Print', csv: 'CSV', png: 'PNG', viewData: 'Data', enlarge: 'Enlarge', back: 'Back',
   login: 'Log in', logout: 'Log out', guest: 'Viewer (guest)', username: 'User name', password: 'Password',
   dataUpTo: 'Data up to', lastUpload: 'Last upload', noData: 'No data yet', loading: 'Loading…',
