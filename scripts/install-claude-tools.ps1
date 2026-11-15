@@ -12,7 +12,9 @@
     powershell -ExecutionPolicy Bypass -File .\install-claude-tools.ps1
 
   OPTIONS:
-    -Drive E              use another drive instead of D
+    -Drive F              use another main drive instead of D
+    -FreeLLMDrive D       put FreeLLMAPI on another drive instead of E
+                          (if that drive does not exist, the main drive is used)
     -KeepClaudeConfig     leave the Claude Code config folder on C:
                           (no new login needed, but plugins stay on C:)
     -SkipFreeLLMAPI       do not install FreeLLMAPI
@@ -22,6 +24,7 @@
 
 param(
     [string]$Drive = "D",
+    [string]$FreeLLMDrive = "E",
     [switch]$KeepClaudeConfig,
     [switch]$SkipFreeLLMAPI
 )
@@ -128,7 +131,15 @@ if ($SkipFreeLLMAPI) {
 } else {
     Step "Step 5: FreeLLMAPI"
 
-    $fl = "$Root\freellmapi"
+    $flDrive = $FreeLLMDrive.TrimEnd(':')
+    if (Test-Path "${flDrive}:\") {
+        $flRoot = "${flDrive}:\ClaudeTools"
+    } else {
+        Write-Host "  Drive $flDrive not found - using $Root instead." -ForegroundColor Yellow
+        $flRoot = $Root
+    }
+    New-Item -ItemType Directory -Force -Path $flRoot | Out-Null
+    $fl = "$flRoot\freellmapi"
     if (Test-Path $fl) {
         Write-Host "  $fl already exists - keeping it."
     } else {
@@ -190,13 +201,13 @@ Write-Host "       search 21st for a dashboard card component"
 if (-not $SkipFreeLLMAPI) {
     Write-Host ""
     Write-Host "  FreeLLMAPI: start it whenever you need it with"
-    Write-Host "       cd $Root\freellmapi"
+    Write-Host "       cd $fl"
     Write-Host "       npm run dev"
     Write-Host "     then open http://localhost:5173 , create the account and add your provider keys."
 
     $start = Read-Host "Start FreeLLMAPI now in a new window? (y/n)"
     if ($start -eq "y") {
-        Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Root\freellmapi'; npm run dev"
+        Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$fl'; npm run dev"
         Start-Sleep -Seconds 15
         Start-Process "http://localhost:5173"
     }
