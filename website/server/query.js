@@ -58,9 +58,24 @@ function resolvePeriod(q, bounds, cfg) {
     else if (mode === 'ytd') { compare = { from: `${+from.slice(0, 4) - 1}-01-01`, to: `${+to.slice(0, 4) - 1}${to.slice(4)}` }; }
     else { const n = C.daysBetween(from, to) + 1; compare = { from: C.addDays(from, -n), to: C.addDays(from, -1) }; }
   }
+  // A period that is still running (data ends before its last day) is "partial". Comparing it with a full
+  // previous period would show a fake drop (e.g. 1 day vs 6 days = -83%), so the comparison is cut to the same days.
+  if (bounds.max && from <= bounds.max && to > bounds.max && (mode === 'week' || mode === 'range')) {
+    period.partial = true;
+    period.dataTo = bounds.max;
+    period.elapsedDays = C.daysBetween(from, bounds.max) + 1;
+    period.workDays = C.workingDays(from, to, cfg.workDays);
+    period.elapsedWorkDays = C.workingDays(from, bounds.max, cfg.workDays);
+    if (compare && (cmp === 'prev' || cmp === 'month')) {
+      compare.to = C.addDays(compare.from, period.elapsedDays - 1);
+      compare.sameDays = true;
+    }
+  }
   if (compare) {
     const wf = C.weekInfo(compare.from, cfg), wt = C.weekInfo(compare.to, cfg);
     compare.label = mode === 'week' && wf.key === wt.key ? `WK${wf.key % 100}` : mode === 'day' ? dLabel(compare.from) : `${dLabel(compare.from)} – ${dLabel(compare.to)}`;
+    if (compare.sameDays && mode === 'week') compare.label += compare.from === compare.to ? ` (${dLabel(compare.from)})` : ` (${dLabel(compare.from)} – ${dLabel(compare.to)})`;
+    compare.short = compare.label.replace(/ \(.*\)$/, ''); // "WK46" for card deltas; the page note explains same-days
     compare.kind = cmp;
   }
   return { period, compare };
