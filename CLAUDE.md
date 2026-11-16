@@ -24,6 +24,9 @@ Owner: Assembly Unit Leader, SEWS-E (6th of October). Website for defects, compl
   `xlsx@0.18.5` with `--no-save` for local testing only.
 
 ## How to work on a request
+The master routing skill is `sews-work-system` (in your claude.ai account). The table below only adds
+what is specific to this repository.
+
 1. Restate the outcome in one line; pick the skills that fit (see table).
 2. Plan, then do the work; split independent parts and run them in parallel.
 3. Verify: run the tests, compare numbers against an independent calculation, render and look at
