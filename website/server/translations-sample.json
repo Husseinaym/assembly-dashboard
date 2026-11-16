@@ -1,0 +1,34 @@
+{
+ "جزء حاد": {
+  "ar": "جزء حاد",
+  "en": "Sharp part"
+ },
+ "زيت على الأرض": {
+  "ar": "زيت على الأرض",
+  "en": "Oil on the floor"
+ },
+ "ممر غير خالي": {
+  "ar": "ممر غير خالي",
+  "en": "Aisle not clear"
+ },
+ "طفاية حريق مغلقة": {
+  "ar": "طفاية حريق مغلقة",
+  "en": "Fire extinguisher blocked"
+ },
+ "لا يوجد واقي": {
+  "ar": "لا يوجد واقي",
+  "en": "No protective guard"
+ },
+ "كابل على الأرض": {
+  "ar": "كابل على الأرض",
+  "en": "Cable on the floor"
+ },
+ "باب الطوارئ مغلق": {
+  "ar": "باب الطوارئ مغلق",
+  "en": "Emergency door blocked"
+ },
+ "إضاءة ضعيفة": {
+  "ar": "إضاءة ضعيفة",
+  "en": "Poor lighting"
+ }
+}

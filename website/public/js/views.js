@@ -1,5 +1,5 @@
 // Generic renderer for every analysis page (the server sends cards + charts + notes as JSON).
-import { t, api, esc, el, fmt, modal, toast } from './util.js';
+import { t, api, esc, el, fmt, modal, toast, icon } from './util.js';
 import { panel } from './charts.js';
 import { S, getQ, qs, drill, showRecords, go, loadMeta, setParams } from './app.js';
 
@@ -25,7 +25,7 @@ export function cardEl(c, page) {
     <span class="card-label">${esc(c.label)}</span>
     <span class="card-value">${esc(c.display)}<span class="unit">${esc(c.unit)}</span></span>
     <span class="card-period">${esc(c.period)}</span>
-    ${deltaHTML(c.delta, page.compare && page.compare.label)}
+    ${deltaHTML(c.delta, page.compare && (page.compare.short || page.compare.label))}
     ${c.sub ? `<span class="card-sub" title="${esc(c.sub)}">${esc(c.sub)}</span>` : ''}
   </${tag}>`);
   if (!c.link) e.addEventListener('click', () => openCard(c, page));
@@ -37,7 +37,7 @@ function periodQ() { const q = getQ(); return Object.fromEntries(['mode', 'week'
 function openCard(c, page) {
   const specs = (c.open || []).map(id => page.charts.find(x => x.id === id)).filter(Boolean);
   const body = modal(`${c.label}: ${c.display} ${c.unit}`, null);
-  body.append(el(`<div class="kv"><span class="muted">Period</span><span>${esc(c.period)}</span>${c.sub ? `<span class="muted">Detail</span><span>${esc(c.sub)}</span>` : ''}${c.delta ? `<span class="muted">Change</span><span>${deltaHTML(c.delta, page.compare && page.compare.label)}</span>` : ''}</div>`));
+  body.append(el(`<div class="kv"><span class="muted">Period</span><span>${esc(c.period)}</span>${c.sub ? `<span class="muted">Detail</span><span>${esc(c.sub)}</span>` : ''}${c.delta ? `<span class="muted">Change</span><span>${deltaHTML(c.delta, page.compare && (page.compare.short || page.compare.label))}</span>` : ''}</div>`));
   if (!specs.length) body.append(el('<div class="empty">No chart for this number.</div>'));
   const ctx = chartCtx(page);
   ctx.onDrill = (p, v) => { drill(p, v); };
@@ -57,13 +57,13 @@ export async function analysisPage(main, route, alive) {
   S.lastPage = page;
   main.innerHTML = '';
   const back = history.state && history.state.drill ? `<a class="back-link" href="#" id="back-link">← ${t('back')}</a>` : '';
-  const head = el(`<div><div class="print-head"><img src="/img/sews-e-logo-wide-indigo.png" height="40" alt="SEWS-E logo" style="height:40px;width:auto"><div><b>${esc((S.meta.company || {}).name || '')} · ${esc(page.title)}</b><div class="muted">${esc(page.period.label)}${page.compare ? ' · compared with ' + esc(page.compare.label) : ''} · ${t('dataUpTo')} ${esc(S.meta.dataDate || '')}</div></div></div>${back}
+  const head = el(`<div><div class="print-head"><img src="/img/sews-e-logo-wide-indigo.png" width="262" height="40" alt="SEWS-E logo" style="height:40px;width:auto"><div><b>${esc((S.meta.company || {}).name || '')} · ${esc(page.title)}</b><div class="muted">${esc(page.period.label)}${page.compare ? ' · compared with ' + esc(page.compare.label) : ''} · ${t('dataUpTo')} ${esc(S.meta.dataDate || '')}</div></div></div>${back}
     <div class="page-head"><div><h1>${esc(page.title)}</h1><div class="period-label">${esc(page.period.label)}${page.compare ? ` · compared with ${esc(page.compare.label)}` : ''}</div></div>
     <div class="page-actions">
-      <button class="btn" data-x="xlsx" title="Download this page as an Excel workbook">⬇ ${t('excel')}</button>
-      <button class="btn" data-x="pdf" title="Download this page as PDF">⬇ ${t('pdf')}</button>
-      ${page.records ? `<button class="btn" data-x="csv" title="Download the filtered raw data as CSV">⬇ ${t('csv')}</button>` : ''}
-      <button class="btn" data-x="print" title="Print view (A4 landscape)">🖶 ${t('print')}</button>
+      <button class="btn" data-x="xlsx" title="Download this page as an Excel workbook">${icon('download')} ${t('excel')}</button>
+      <button class="btn" data-x="pdf" title="Download this page as PDF">${icon('download')} ${t('pdf')}</button>
+      ${page.records ? `<button class="btn" data-x="csv" title="Download the filtered raw data as CSV">${icon('download')} ${t('csv')}</button>` : ''}
+      <button class="btn" data-x="print" title="Print view (A4 landscape)">${icon('print')} ${t('print')}</button>
     </div></div></div>`);
   main.append(head);
   head.querySelector('#back-link')?.addEventListener('click', e => { e.preventDefault(); history.back(); });
@@ -81,7 +81,7 @@ export async function analysisPage(main, route, alive) {
   }
   if (!page.hasData) { emptyState(main, page, page.segment); return page; }
   const totalCards = page.segment === 'home' ? 0 : (page.cards || []).length;
-  if (page.notes && page.notes.length) main.append(el(`<div class="notes">${page.notes.map(n => `<div class="note warn">${esc(n)}</div>`).join('')}</div>`));
+  if (page.notes && page.notes.length) main.append(el(`<div class="notes">${page.notes.map(n => `<div class="note ${/still running/.test(n) ? 'info' : 'warn'}">${esc(n)}</div>`).join('')}</div>`));
   if (page.segment === 'home') renderHome(main, page);
   else {
     const cards = el('<div class="cards"></div>');
@@ -96,18 +96,35 @@ export async function analysisPage(main, route, alive) {
   return page;
 }
 
+/** One-line answer to "are we on target?": how many KPIs are off target and which ones, before any detail. */
+function statusStrip(page) {
+  const all = page.rows.flatMap(r => r.cards.map(c => ({ ...c, seg: r.title })));
+  const off = all.filter(c => c.status === 'red'), on = all.filter(c => c.status === 'green');
+  const pq = qs(periodQ()).slice(1);
+  const link = c => esc(c.link + (pq ? (c.link.includes('?') ? '&' : '?') + pq : ''));
+  const box = el(`<section class="status-strip ${off.length ? 'has-off' : 'all-on'}" aria-label="Target status">
+    <div class="status-count off"><span class="num">${off.length}</span><span>off target</span></div>
+    <div class="status-count on"><span class="num">${on.length}</span><span>on target</span></div>
+    <div class="status-list">${off.length
+      ? off.map(c => `<a class="status-chip" href="${link(c)}" data-link><span class="muted">${esc(c.seg)} ·</span> <b>${esc(c.label)}</b> ${esc(c.display)}</a>`).join('')
+      : '<span class="muted">Every KPI with a target is on target.</span>'}</div>
+  </section>`);
+  return box;
+}
+
 function renderHome(main, page) {
-  for (const r of page.rows) {
-    const sec = el(`<section class="seg-row"><h2>${esc(r.title)} <a href="${esc(r.link)}${qs(periodQ())}" data-link>Open ${esc(r.title.toLowerCase())} ›</a></h2><div class="cards"></div></section>`);
-    const cards = sec.querySelector('.cards');
-    for (const c of r.cards) cards.append(cardEl(c, page));
-    main.append(sec);
-  }
+  main.append(statusStrip(page));
   if (page.top3 && page.top3.length) {
     const box = el(`<section class="seg-row"><h2>Top issues of ${esc(page.period.short)}</h2><div class="top3"></div></section>`);
     const pq = qs(periodQ()).slice(1);
     page.top3.forEach((x, i) => box.querySelector('.top3').append(el(`<a class="issue${x.red ? ' red' : ''}" href="${esc(x.link + (pq ? (x.link.includes('?') ? '&' : '?') + pq : ''))}" data-link><span class="n">${x.red ? '!' : i + 1 - (page.top3[0].red ? 1 : 0)}</span><span>${esc(x.text)}</span></a>`)));
     main.append(box);
+  }
+  for (const r of page.rows) {
+    const sec = el(`<section class="seg-row"><h2>${esc(r.title)} <a href="${esc(r.link)}${qs(periodQ())}" data-link>Open ${esc(r.title.toLowerCase())} ›</a></h2><div class="cards"></div></section>`);
+    const cards = sec.querySelector('.cards');
+    for (const c of r.cards) cards.append(cardEl(c, page));
+    main.append(sec);
   }
   const grid = el('<div class="grid"></div>');
   const ctx = chartCtx(page);
@@ -120,7 +137,7 @@ export function recordsPanel(spec, page) {
   const p = el(`<section class="panel wide records-panel" id="records" style="margin-top:14px"><div class="panel-head"><div><h3>${esc(spec.title)}</h3><div class="sub">${esc(page.period.label)} · all filters applied</div></div>
     <div class="panel-actions"><button data-a="csv">${t('csv')}</button><button data-a="xlsx">${t('excel')}</button></div></div>
     <div class="tbl-tools"><input type="search" placeholder="Search in records…" aria-label="Search in records"><span class="muted info"></span></div>
-    <div class="tbl-wrap"></div><div class="pager"></div></section>`);
+    <div class="tbl-wrap" tabindex="0" role="region" aria-label="${esc(spec.title)}"></div><div class="pager"></div></section>`);
   const st = { page: 1, size: 50, sort: 'date', dir: 'desc', q: '' };
   const wrap = p.querySelector('.tbl-wrap'), pager = p.querySelector('.pager'), info = p.querySelector('.info');
   const baseQ = () => ({ ...getQ(), seg: spec.seg, subset: spec.subset });
@@ -153,7 +170,7 @@ export function loginView(main, next) {
   main.innerHTML = '';
   const f = el(`<form class="section login-box"><h2>${t('login')}</h2>
     <label class="field"><span>${t('username')}</span><input type="text" name="u" autocomplete="username" required></label>
-    <label class="field" style="margin-top:8px"><span>PIN</span><input type="password" name="p" inputmode="numeric" autocomplete="current-password" required></label>
+    <label class="field" style="margin-top:8px"><span>Password</span><input type="password" name="p" autocomplete="current-password" required></label>
     <div class="frow" style="margin-top:12px"><button class="btn primary" type="submit">${t('login')}</button></div>
     <p class="muted" style="font-size:12px">Admins can upload files and change settings. Viewers can view and download.</p></form>`);
   f.addEventListener('submit', async e => {

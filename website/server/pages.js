@@ -6,6 +6,8 @@ const { SEG, Q, where, resolvePeriod, dataBounds, dLabel, dShort, list } = requi
 const K = require('./charts');
 const TR = require('./translate');
 const { f0, f1, pct } = K;
+/** "1 day", "6 days", "1 working day" ... */
+const nDays = (n, what = 'day') => `${f0(n)} ${what}${n === 1 ? '' : 's'}`;
 
 // ---------- context ----------
 function makeCtx(db, q) {
@@ -17,7 +19,13 @@ function makeCtx(db, q) {
   const colors = Object.fromEntries(facilities.map(x => [x.name, x.color]));
   const f = { ...q, _lineOnly: !settings.complianceIncludeCamera };
   const asOf = bounds.max && bounds.max < period.to ? bounds.max : period.to;
-  return { db, q, f, settings, cfg, bounds, period: P0(period), compare, colors, facilities, notes: [], asOf };
+  const notes = [];
+  if (period.partial) {
+    const done = period.elapsedWorkDays, all = period.workDays;
+    notes.push(`${period.short} is still running: data up to ${dLabel(period.dataTo)} (${done} of ${all} working day${all === 1 ? '' : 's'}).` +
+      (compare && compare.sameDays ? ` Changes compare with the same days of ${compare.label.replace(/ \(.*\)$/, '')}, so they are fair.` : ''));
+  }
+  return { db, q, f, settings, cfg, bounds, period: P0(period), compare, colors, facilities, notes, asOf };
 }
 /** The comparison period only counts when the segment has data in it. */
 function cmpFor(ctx, Qr) { return ctx.compare && Qr.dataDays(ctx.compare).length ? ctx.compare : null; }
@@ -322,7 +330,7 @@ function mislocationPage(ctx, tab = 'total') {
   const avgT = days.length ? t.value / nd : null, avgE = days.length ? e.value / nd : null;
   const specApplies = !facFilter.length;
   const cards = [
-    card('total-day', 'Total mislocations per day', avgT, { digits: 1, unit: 'per day (average)', period: `${P.short}, ${days.length} days`, sub: `${f0(t.value)} in the period`, delta: tp ? delta(avgT, tp.value / cpDays) : null, status: specApplies ? C.status(avgT, spec, 'within') : 'grey', open: ['mis-daily', 'mis-by-facility'] }),
+    card('total-day', 'Total mislocations per day', avgT, { digits: 1, unit: 'per day (average)', period: `${P.short}, ${nDays(days.length, 'data day')}`, sub: `${f0(t.value)} in the period`, delta: tp ? delta(avgT, tp.value / cpDays) : null, status: specApplies ? C.status(avgT, spec, 'within') : 'grey', open: ['mis-daily', 'mis-by-facility'] }),
     card('elec-day', 'Electrical mislocations per day', avgE, { digits: 1, unit: 'per day (average)', period: P.short, sub: `${f0(e.value)} found at Electrical Test`, delta: ep ? delta(avgE, ep.value / cpDays) : null, open: ['ele-daily', 'ele-by-facility'] }),
     card('elec-share', 'Electrical share', t.value ? e.value / t.value * 100 : null, { digits: 1, suffix: '%', unit: 'electrical / total', period: P.short, sub: `${f0(e.value)} of ${f0(t.value)}`, open: ['side-by-side'] }),
     card('status', 'Factory status vs spec', avgT, { digits: 1, unit: 'per day', period: P.short, status: specApplies ? C.status(avgT, spec, 'within') : 'grey', sub: specApplies ? `LSL ${f0(spec.lsl)} · USL ${f0(spec.usl)}: ${avgT === null ? 'no data' : avgT < spec.lsl ? 'below LSL' : avgT > spec.usl ? 'above USL' : 'within limits'}` : 'Factory limits apply to the whole factory', open: ['imr-factory', 'weekly-avg'] }),
@@ -359,7 +367,7 @@ function mislocationPage(ctx, tab = 'total') {
     const sf = Qf.series(range);
     const fv = dates.map(d => sf.get(d) || 0);
     const factoryAvg = C.mean(fv);
-    charts.push(K.imrChart({ id: 'imr-factory', title: 'Factory daily mislocations: I-MR control chart', dates, values: fv, spec, yName: 'Mislocations per day', note: `Window: ${dLabel(range.from)} – ${dLabel(range.to, true)} (${dates.length} data days). Spec limits LSL ${f0(spec.lsl)}, USL ${f0(spec.usl)}.` }));
+    charts.push(K.imrChart({ id: 'imr-factory', title: 'Factory daily mislocations: I-MR control chart', dates, values: fv, spec, yName: 'Mislocations per day', note: `Window: ${dLabel(range.from)} – ${dLabel(range.to, true)} (${nDays(dates.length, 'data day')}). Spec limits LSL ${f0(spec.lsl)}, USL ${f0(spec.usl)}.` }));
     // weekly averages
     const ww = weekWindow(ctx, 12);
     const wk = new Map();
@@ -425,7 +433,7 @@ function compliancePage(ctx, sub) {
     const to = segLast < P.to ? segLast : P.to;
     const wd = C.workingDays(P.from, to, ctx.cfg.workDays);
     const tg = tgtDay * wd; const gap = tg - s.cur.value;
-    cards.splice(1, 0, card('target', 'Target and gap', tg, { unit: 'cases', period: `${P.short}, ${wd} working days x ${f0(tgtDay)}`, status: C.status(s.cur.value, tg), sub: gap >= 0 ? `${f0(gap)} cases under target (within target)` : `${f0(-gap)} cases over target`, open: ['daily', 'weekly'] }));
+    cards.splice(1, 0, card('target', 'Target and gap', tg, { unit: 'cases', period: `${P.short}, ${nDays(wd, 'working day')} × ${f0(tgtDay)}`, status: C.status(s.cur.value, tg), sub: gap >= 0 ? `${f0(gap)} cases under target (within target)` : `${f0(-gap)} cases over target`, open: ['daily', 'weekly'] }));
     cards[0].status = C.status(s.cur.value, tg);
   }
   const rows = complianceCases(ctx, P, subset);
@@ -440,7 +448,7 @@ function compliancePage(ctx, sub) {
   // I-MR on daily cases
   const range = P.days >= 28 ? { from: P.from, to: P.to } : { from: C.addDays(P.to, -55), to: P.to };
   const dates = s.Qr.dataDays(range); const ser = s.Qr.series(range);
-  extra.push(K.imrChart({ id: 'imr', title: `Daily ${subj}: I-MR control chart`, dates, values: dates.map(d => ser.get(d) || 0), spec: tgtDay !== null ? { lsl: null, usl: tgtDay } : null, yName: `${cap(subj)} per day`, note: `Window: ${dLabel(range.from)} – ${dLabel(range.to, true)} (${dates.length} data days).${tgtDay !== null ? ` Target ${f0(tgtDay)} per day drawn as the upper spec.` : ''}` }));
+  extra.push(K.imrChart({ id: 'imr', title: `Daily ${subj}: I-MR control chart`, dates, values: dates.map(d => ser.get(d) || 0), spec: tgtDay !== null ? { lsl: null, usl: tgtDay } : null, yName: `${cap(subj)} per day`, note: `Window: ${dLabel(range.from)} – ${dLabel(range.to, true)} (${nDays(dates.length, 'data day')}).${tgtDay !== null ? ` Target ${f0(tgtDay)} per day drawn as the upper spec.` : ''}` }));
   // source donut
   const bySrc = new Q(ctx.db, 'compliance', { ...ctx.f, _lineOnly: false }).by('source', P);
   if (sub !== 'camera' && ctx.f._lineOnly) {
@@ -662,9 +670,9 @@ function homePage(ctx) {
   const cam = new Q(ctx.db, 'compliance', { ...ctx.f, _lineOnly: false }).total(P, { sql: "source='Camera'" });
   const ccases = complianceCases(ctx, P); const rep = repeatOperators(ccases);
   rows.push({ segment: 'compliance', title: 'Compliance', link: '/compliance', cards: [
-    card('c-total', 'Compliance cases', c.value, { unit: 'cases', period: P.short, delta: delta(c.value, cp && cp.value), status: ctg !== null ? C.status(c.value, ctg) : 'grey', sub: ctg !== null ? `Target ${f0(ctg)} (${f0(ct)} x ${wd} days)` : 'No target set', link: '/compliance' }),
+    card('c-total', 'Compliance cases', c.value, { unit: 'cases', period: P.short, delta: delta(c.value, cp && cp.value), status: ctg !== null ? C.status(c.value, ctg) : 'grey', sub: ctg !== null ? `Target ${f0(ctg)} (${f0(ct)} per day × ${nDays(wd, 'working day')})` : 'No target set', link: '/compliance' }),
     card('c-gap', 'Gap to target', ctg !== null ? ctg - c.value : null, { unit: 'cases', period: P.short, status: ctg !== null ? C.status(c.value, ctg) : 'grey', sub: ctg === null ? '' : ctg - c.value >= 0 ? 'Within target' : 'Over target', link: '/compliance' }),
-    card('c-avg', 'Cases per day', cdays ? c.value / cdays : null, { digits: 1, unit: 'per day', period: P.short, status: ct !== null && cdays ? C.status(c.value / cdays, ct) : 'grey', sub: `${cdays} data days`, link: '/compliance' }),
+    card('c-avg', 'Cases per day', cdays ? c.value / cdays : null, { digits: 1, unit: 'per day', period: P.short, status: ct !== null && cdays ? C.status(c.value / cdays, ct) : 'grey', sub: `Average of ${nDays(cdays, 'data day')}`, link: '/compliance' }),
     card('c-cam', 'Camera cases', cam.value, { unit: 'cases', period: P.short, link: '/compliance/camera' }),
     card('c-rep', 'Repeat operators', rep.length, { unit: 'operators', period: P.short, status: rep.length ? 'red' : 'green', link: '/compliance/operators' }),
   ] });
@@ -675,7 +683,7 @@ function homePage(ctx) {
   const st = target(ctx, 'safety_per_day');
   rows.push({ segment: 'safety', title: 'Safety', link: '/safety', cards: [
     card('s-total', 'Safety cases', s.value, { unit: 'cases', period: P.short, delta: delta(s.value, sp && sp.value), status: st !== null && sdays ? C.status(s.value / sdays, st) : 'grey', link: '/safety' }),
-    card('s-avg', 'Cases per day', sdays ? s.value / sdays : null, { digits: 1, unit: 'per day', period: P.short, sub: `${sdays} data days`, link: '/safety' }),
+    card('s-avg', 'Cases per day', sdays ? s.value / sdays : null, { digits: 1, unit: 'per day', period: P.short, sub: `Average of ${nDays(sdays, 'data day')}`, link: '/safety' }),
     card('s-asm', 'Assembly cases', sa.value, { unit: 'cases', period: P.short, delta: delta(sa.value, sap && sap.value), sub: `${pct(sa.value / (s.value || 1) * 100)} of all`, link: '/safety/departments?dept=Assembly' }),
     card('s-top', 'Top item', items[0] ? items[0].value : null, { unit: 'cases', period: P.short, sub: items[0] ? items[0].name : '', link: '/safety/items' }),
   ] });
@@ -729,6 +737,24 @@ const PAGES = {
   'safety/items': ctx => safetyPage(ctx, 'items'),
 };
 
+/** In weekly charts the running week is not comparable with full weeks: mark it (drawn lighter, label "WK47*") and explain it. */
+function markPartialWeek(ctx, charts) {
+  const lastData = ctx.bounds.max; if (!lastData) return;
+  const running = C.weekInfo(lastData, ctx.cfg);
+  if (running.end <= lastData) return; // the last week with data is complete
+  const done = C.workingDays(running.start, lastData, ctx.cfg.workDays), all = C.workingDays(running.start, running.end, ctx.cfg.workDays);
+  const text = `* ${running.label} is still running: data up to ${dLabel(lastData)} (${done} of ${nDays(all, 'working day')}), so it is not comparable with full weeks.`;
+  const walk = list => { for (const ch of list) {
+    if (ch.type === 'multiples' && ch.charts) { walk(ch.charts); continue; }
+    if (!['line', 'bar', 'stacked'].includes(ch.type) || !Array.isArray(ch.keys)) continue;
+    const i = ch.keys.indexOf(running.key);
+    if (i < 0 || i !== ch.keys.length - 1) continue;
+    ch.partialIndex = i;
+    ch.note = ch.note ? `${ch.note} ${text}` : text;
+  } };
+  walk(charts);
+}
+
 function buildPage(db, id, q) {
   const fn = PAGES[id];
   if (!fn) return null;
@@ -737,6 +763,7 @@ function buildPage(db, id, q) {
   const seg = page.segment === 'home' ? null : page.segment;
   const hasData = seg ? !!ctx.bounds.seg[seg].b : !!ctx.bounds.max;
   page.charts = (page.charts || []).filter(Boolean);
+  markPartialWeek(ctx, page.charts);
   return { id, ...page, period: ctx.period, compare: ctx.compare, filters: q, notes: ctx.notes, hasData, colors: ctx.colors, generated: new Date().toISOString() };
 }
 

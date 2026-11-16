@@ -92,7 +92,7 @@ const SETTINGS = {
   facilitySpec: {}, // { 'EB Turbo': { mode: 'derived' } | { mode:'manual', lsl, usl } }
   newOperatorMonths: 3,
   presentation: { seconds: 30, pages: ['/', '/defects', '/defects/mislocation', '/defects/critical', '/compliance', '/safety'] },
-  requireLogin: false,
+  requireLogin: true,
   company: { name: 'SEWS-E', site: '6th of October, Egypt', department: 'Assembly Production Department' },
   repeatDays: 7,
 };

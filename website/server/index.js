@@ -11,6 +11,8 @@ const PG = require('./pages');
 const C = require('./calc');
 const { dataBounds } = require('./query');
 const backup = require('./backup');
+const AUTH = require('./auth');
+const STORE = require('./store');
 
 const CONFIG_FILE = path.join(DB.PATHS.website, 'config.json');
 const config = Object.assign({ port: 8080, host: '0.0.0.0', db: 'data/production.db' }, fs.existsSync(CONFIG_FILE) ? JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) : {});
@@ -19,15 +21,39 @@ if (process.env.PORT) config.port = Number(process.env.PORT);
 const db = DB.open(path.resolve(DB.PATHS.website, config.db));
 console.log('Database: ' + path.relative(DB.PATHS.project, path.resolve(DB.PATHS.website, config.db)));
 
+// ---------- security start-up checks (fail securely) ----------
+AUTH.migrate(db);
+try { AUTH.ensureAdmin(db); } catch (e) { console.error('\nSTARTUP REFUSED: ' + e.message + '\n'); process.exit(1); }
+const ALLOW_GUEST = process.env.PDA_ALLOW_GUEST === '1'; // only for a PC on the plant network; never set this in the cloud
+
 const app = express();
 app.disable('x-powered-by');
+// Behind the hosting provider's proxy the real visitor address is in X-Forwarded-For (needed for login limits).
+app.set('trust proxy', process.env.PDA_TRUST_PROXY !== undefined ? Number(process.env.PDA_TRUST_PROXY) : (process.env.SPACE_ID ? 1 : 0));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', `frame-ancestors ${process.env.PDA_FRAME_ANCESTORS || "'self'"}`); // not embeddable in other sites
+  if (AUTH.isSecure(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  if (req.path.startsWith('/api/')) res.setHeader('Cache-Control', 'no-store'); // private data is never cached by proxies
+  next();
+});
+// Changes (POST / PUT / DELETE) are only accepted from the website itself, not from another site.
+app.use((req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || process.env.PDA_ORIGIN_CHECK === '0') return next();
+  const origin = req.headers.origin; if (!origin) return next();
+  let host = null; try { host = new URL(origin).host; } catch { /* invalid origin */ }
+  if (host && (host === req.headers.host || host === req.headers['x-forwarded-host'])) return next();
+  res.status(403).json({ error: 'Request refused (wrong origin)' });
+});
 app.use(compression());
 app.use(express.json({ limit: '5mb' }));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 60 * 1024 * 1024 } });
 
 // ---------- cache (cleared after every upload / settings change) ----------
 let version = 1; const cache = new Map();
-function bump() { version++; cache.clear(); try { db.exec('PRAGMA optimize'); } catch {} warm(); require('./hfsync').schedule(db); }
+function bump() { version++; cache.clear(); try { db.exec('PRAGMA optimize'); } catch {} warm(); STORE.schedule(db); }
 // Pre-build the most used views in idle moments after a data change, so the first viewer does not wait.
 let warmTimer = null;
 function warm() {
@@ -51,35 +77,37 @@ function cached(key, fn) {
 }
 
 // ---------- auth ----------
-function parseCookies(req) { const o = {}; for (const p of (req.headers.cookie || '').split(';')) { const i = p.indexOf('='); if (i > 0) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); } return o; }
-app.use((req, res, next) => {
-  const t = parseCookies(req).pda_session;
-  req.user = null;
-  if (t) { const s = db.prepare('SELECT s.username, u.role FROM sessions s JOIN users u ON u.username=s.username WHERE s.token=?').get(t); if (s) req.user = { username: s.username, role: s.role }; }
-  next();
-});
-function settings() { return DB.getSettings(db); }
+const parseCookies = AUTH.parseCookies;
+app.use((req, res, next) => { req.user = AUTH.readSession(db, parseCookies(req)[AUTH.COOKIE]); next(); });
+/** Viewing always needs a login, unless PDA_ALLOW_GUEST=1 is set on a plant-network PC and the setting is off. */
+function settings() { const s = DB.getSettings(db); if (!ALLOW_GUEST) s.requireLogin = true; return s; }
 function canView(req, res, next) { if (!req.user && settings().requireLogin) return res.status(401).json({ error: 'Please log in' }); next(); }
 function admin(req, res, next) { if (!req.user || req.user.role !== 'admin') return res.status(403).json({ error: 'Admin login required' }); next(); }
 const wrap = fn => (req, res) => { try { const r = fn(req, res); if (r !== undefined) res.json(r); } catch (e) { console.error(e); res.status(400).json({ error: e.message }); } };
 
 app.post('/api/login', wrap((req, res) => {
-  const { username, password } = req.body || {};
-  const u = db.prepare('SELECT * FROM users WHERE lower(username)=lower(?)').get(String(username || '').trim());
-  if (!u || DB.hashPassword(String(password || '').trim(), u.salt).hash !== u.hash) { res.status(401).json({ error: 'Wrong user name or PIN' }); return; }
-  const token = crypto.randomBytes(24).toString('hex');
-  db.prepare('INSERT INTO sessions(token,username,created_at) VALUES(?,?,?)').run(token, u.username, new Date().toISOString());
-  res.setHeader('Set-Cookie', `pda_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`);
-  return { username: u.username, role: u.role };
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const username = String(body.username || '').trim().slice(0, 60), password = String(body.password || '').trim().slice(0, 200);
+  const ip = req.ip || 'unknown';
+  const wait = AUTH.lockedFor(ip, username);
+  if (wait) { res.setHeader('Retry-After', String(wait)); res.status(429).json({ error: `Too many failed attempts. Try again in ${Math.ceil(wait / 60)} minute${wait > 60 ? 's' : ''}.` }); return; }
+  const u = AUTH.checkLogin(db, username, password);
+  if (!u) { AUTH.recordFailure(ip, username); res.status(401).json({ error: 'Wrong user name or password' }); return; }
+  AUTH.recordSuccess(ip, username);
+  AUTH.destroySession(db, parseCookies(req)[AUTH.COOKIE]); // a new login always gets a new session
+  res.setHeader('Set-Cookie', AUTH.sessionCookie(req, AUTH.createSession(db, u.username)));
+  return u;
 }));
 app.post('/api/logout', wrap((req, res) => {
-  const t = parseCookies(req).pda_session; if (t) db.prepare('DELETE FROM sessions WHERE token=?').run(t);
-  res.setHeader('Set-Cookie', 'pda_session=; Path=/; Max-Age=0'); return { ok: true };
+  AUTH.destroySession(db, parseCookies(req)[AUTH.COOKIE]);
+  res.setHeader('Set-Cookie', AUTH.sessionCookie(req, null)); return { ok: true };
 }));
 
 // ---------- meta / pages ----------
 app.get('/api/meta', wrap(req => {
   const s = settings();
+  // Before sign-in the website only learns that a login is needed: no facility names, dates or file names.
+  if (!req.user && s.requireLogin) return { user: null, requireLogin: true, company: s.company, week: s.week, presentation: null, facilities: [], dataDate: null, dataWeek: null, bounds: {}, lastUpload: null, weeks: [], version: 0 };
   const b = dataBounds(db);
   const last = db.prepare('SELECT uploaded_at, file_name FROM uploads ORDER BY id DESC LIMIT 1').get();
   const weeks = db.prepare('SELECT DISTINCT week_key k FROM defects UNION SELECT DISTINCT week_key FROM compliance UNION SELECT DISTINCT week_key FROM safety ORDER BY k DESC').all().map(r => r.k);
@@ -153,21 +181,44 @@ app.post('/api/upload/reanalyze', admin, wrap(req => {
   const { token, overrides } = req.body;
   return IMP.reanalyze(db, token, overrides || []);
 }));
-app.post('/api/upload/commit', admin, wrap(req => {
-  const { token, overrides, decisions } = req.body;
-  const r = IMP.commit(db, { token, overrides: overrides || [], decisions: decisions || {}, uploader: req.user.username });
-  bump(); return r;
-}));
+/** Local path of a kept upload ("Uploads/2026-11-15/101500_file.xlsx"); refuses anything outside the uploads folder. */
+function uploadPath(rel) {
+  const f = path.resolve(DB.PATHS.uploads, String(rel).replace(/^Uploads[\\/]/, ''));
+  if (!f.startsWith(path.resolve(DB.PATHS.uploads) + path.sep)) throw new Error('Invalid file path');
+  return f;
+}
+app.post('/api/upload/commit', admin, async (req, res) => {
+  try {
+    const { token, overrides, decisions } = req.body;
+    const r = IMP.commit(db, { token, overrides: overrides || [], decisions: decisions || {}, uploader: req.user.username });
+    // Keep the original Excel file in the private store, so it survives restarts of the server.
+    let fileStored = null;
+    const up = db.prepare('SELECT id, stored_path FROM uploads ORDER BY id DESC LIMIT 1').get();
+    if (STORE.enabled && up && up.stored_path) {
+      try { await STORE.put(up.stored_path, fs.readFileSync(uploadPath(up.stored_path)), 'Original upload #' + up.id); fileStored = true; }
+      catch (e) { console.error('Private store: original file not saved:', e.message); fileStored = false; }
+    }
+    bump(); res.json({ ...r, fileStored });
+  } catch (e) { console.error(e); res.status(400).json({ error: e.message }); }
+});
 app.get('/api/uploads', admin, wrap(() => db.prepare('SELECT id, file_name, stored_path, uploader, uploaded_at, segments, rows_imported, rows_rejected, date_from, date_to FROM uploads ORDER BY id DESC').all().map(u => {
   let active = 0; for (const t of ['defects', 'compliance', 'safety', 'production']) active += db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE upload_id=?`).get(u.id).n;
   active += db.prepare('SELECT COUNT(*) n FROM operators WHERE upload_id=?').get(u.id).n;
   return { ...u, rows_active: active };
 })));
 app.get('/api/uploads/:id', admin, wrap(req => { const u = db.prepare('SELECT * FROM uploads WHERE id=?').get(req.params.id); if (!u) throw new Error('Not found'); return { ...u, report: JSON.parse(u.report || '{}') }; }));
-app.get('/api/uploads/:id/file', admin, (req, res) => {
-  const u = db.prepare('SELECT * FROM uploads WHERE id=?').get(req.params.id);
-  if (!u || !u.stored_path) return res.status(404).send('File not kept');
-  res.download(path.join(DB.PATHS.project, u.stored_path), u.file_name);
+app.get('/api/uploads/:id/file', admin, async (req, res) => {
+  try {
+    const u = db.prepare('SELECT * FROM uploads WHERE id=?').get(req.params.id);
+    if (!u || !u.stored_path) return res.status(404).send('File not kept');
+    const f = uploadPath(u.stored_path);
+    if (!fs.existsSync(f)) { // after a restart the local copy is gone: fetch it from the private store
+      const buf = STORE.enabled ? await STORE.get(u.stored_path) : null;
+      if (!buf) return res.status(404).send('The original file is no longer available');
+      fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, buf);
+    }
+    res.download(f, u.file_name);
+  } catch (e) { console.error(e); res.status(500).send('Could not read the file'); }
 });
 app.delete('/api/uploads/:id', admin, wrap(req => { const n = IMP.deleteUpload(db, Number(req.params.id)); bump(); return { removed: n }; }));
 
@@ -244,12 +295,18 @@ app.put('/api/templates/:id', admin, wrap(req => {
 app.delete('/api/templates/:id', admin, wrap(req => { db.prepare('DELETE FROM templates WHERE id=?').run(req.params.id); return { ok: true }; }));
 app.get('/api/fields', admin, wrap(() => require('./defaults').FIELDS));
 app.post('/api/users', admin, wrap(req => {
-  const { username, password, role } = req.body; if (!username || !password) throw new Error('User name and password are required');
-  const h = DB.hashPassword(password); db.prepare('INSERT OR REPLACE INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(String(username).trim(), h.salt, h.hash, role === 'admin' ? 'admin' : 'viewer'); return { ok: true };
+  const username = String(req.body.username || '').trim(), password = String(req.body.password || '').trim(), role = req.body.role === 'admin' ? 'admin' : 'viewer';
+  const bad = AUTH.usernameProblem(username) || AUTH.passwordProblem(password, username); if (bad) throw new Error(bad);
+  if (username.toLowerCase() === req.user.username.toLowerCase() && role !== 'admin') throw new Error('You cannot remove your own admin role');
+  const h = AUTH.hashPassword(password);
+  db.prepare('DELETE FROM users WHERE lower(username)=lower(?)').run(username);
+  db.prepare('INSERT INTO users(username,salt,hash,role) VALUES(?,?,?,?)').run(username, h.salt, h.hash, role);
+  if (username.toLowerCase() !== req.user.username.toLowerCase()) AUTH.destroyUserSessions(db, username); // a changed password signs that user out
+  STORE.schedule(db); return { ok: true };
 }));
 app.delete('/api/users/:u', admin, wrap(req => {
   if (req.params.u === req.user.username) throw new Error('You cannot delete yourself');
-  db.prepare('DELETE FROM users WHERE username=?').run(req.params.u); db.prepare('DELETE FROM sessions WHERE username=?').run(req.params.u); return { ok: true };
+  db.prepare('DELETE FROM users WHERE username=?').run(req.params.u); AUTH.destroyUserSessions(db, req.params.u); STORE.schedule(db); return { ok: true };
 }));
 app.post('/api/backup', admin, wrap(() => ({ file: backup.run(db, true) })));
 
@@ -263,6 +320,8 @@ app.get('*', (req, res) => res.sendFile(path.join(DB.PATHS.website, 'public', 'i
 
 // ---------- start ----------
 backup.schedule(db);
+// Save pending changes to the private store before the hosting provider stops the server.
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { STORE.flush().catch(() => {}).finally(() => process.exit(0)); });
 db.exec('PRAGMA optimize');
 warm();
 app.listen(config.port, config.host, () => {

@@ -80,6 +80,7 @@ function renderAnalysis(box, a, overrides) {
     try {
       const r = await api('/api/upload/commit', { method: 'POST', body: { token: a.token, overrides, decisions } });
       await loadMeta(); toast(`Imported ${fmt(r.imported)} rows from ${a.fileName}`);
+      if (r.fileStored === false) toast('The data was imported, but the original file could not be saved to the private store. Keep your own copy of the file.', true);
       box.innerHTML = ''; box.append(el(`<h2>${esc(a.fileName)} <span class="badge green">Imported</span></h2>`)); box.append(validationHTML(r, true)); box.append(newNamesMapper(r));
       box.append(el(`<div class="frow" style="margin-top:10px"><a class="btn" href="/admin/history" data-link>Upload history</a><a class="btn primary" href="/" data-link>Open the home page</a></div>`));
     } catch (e) { toast(e.message, true); imp.disabled = false; imp.textContent = 'Import'; }
@@ -368,7 +369,7 @@ function templates(body) {
 function users(body) {
   const sec = el(`<section class="section"><h2>Users</h2><p class="muted">Admin: upload, delete, settings. Viewer: view and download. Users sign in with their name and a PIN (or password).</p>
     <table class="tbl"><thead><tr><th>User</th><th>Role</th><th></th></tr></thead><tbody>${master.users.map(u => `<tr><td>${esc(u.username)}</td><td>${esc(u.role)}</td><td><button class="btn small danger" data-d="${esc(u.username)}">Delete</button></td></tr>`).join('')}</tbody></table>
-    <h3>Add a user or change a password</h3><div class="form-grid"><label class="field"><span>User name</span><input type="text" name="u"></label><label class="field"><span>PIN or password</span><input type="password" name="p" autocomplete="new-password"></label><label class="field"><span>Role</span><select name="r"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label></div>
+    <h3>Add a user or change a password</h3><div class="form-grid"><label class="field"><span>User name</span><input type="text" name="u"></label><label class="field"><span>Password (at least 8 characters)</span><input type="password" name="p" autocomplete="new-password"></label><label class="field"><span>Role</span><select name="r"><option value="viewer">Viewer</option><option value="admin">Admin</option></select></label></div>
     <button class="btn primary" style="margin-top:8px" data-a="add">Save user</button></section>`);
   sec.addEventListener('click', async e => {
     if (e.target.dataset.d) { if (!confirm('Delete user ' + e.target.dataset.d + '?')) return; try { await api('/api/users/' + encodeURIComponent(e.target.dataset.d), { method: 'DELETE' }); toast('Deleted'); await loadMaster(); body.innerHTML = ''; users(body); } catch (err) { toast(err.message, true); } }

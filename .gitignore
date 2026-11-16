@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Local databases, uploads and backups (created when the app runs)
+website/data/
+Backups/
+Uploads/
+*.db
+*.db-shm
+*.db-wal
+
+# Private files: never commit real plant data or secrets
+website/server/translations-ar.json
+translations-ar.json
+.env
+.env.*
+*.xlsx
+*.xls
+
+# OS / editor
+.DS_Store
+Thumbs.db
