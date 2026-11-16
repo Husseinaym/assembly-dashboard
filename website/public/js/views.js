@@ -170,7 +170,7 @@ export function loginView(main, next) {
   main.innerHTML = '';
   const f = el(`<form class="section login-box"><h2>${t('login')}</h2>
     <label class="field"><span>${t('username')}</span><input type="text" name="u" autocomplete="username" required></label>
-    <label class="field" style="margin-top:8px"><span>PIN</span><input type="password" name="p" inputmode="numeric" autocomplete="current-password" required></label>
+    <label class="field" style="margin-top:8px"><span>Password</span><input type="password" name="p" autocomplete="current-password" required></label>
     <div class="frow" style="margin-top:12px"><button class="btn primary" type="submit">${t('login')}</button></div>
     <p class="muted" style="font-size:12px">Admins can upload files and change settings. Viewers can view and download.</p></form>`);
   f.addEventListener('submit', async e => {

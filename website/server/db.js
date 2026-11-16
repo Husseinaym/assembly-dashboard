@@ -1,7 +1,6 @@
 'use strict';
 const path = require('path');
 const fs = require('fs');
-const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const D = require('./defaults');
 
@@ -68,8 +67,11 @@ CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, salt TEXT, hash TEX
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, username TEXT, created_at TEXT);
 `;
 
-function hashPassword(pw, salt = crypto.randomBytes(16).toString('hex')) {
-  return { salt, hash: crypto.scryptSync(String(pw), salt, 32).toString('hex') };
+const { hashPassword } = require('./auth');
+/** Private translation table (never in the repository): PDA_TRANSLATIONS, else data/translations-ar.json, else the small public sample. */
+function translationsFile() {
+  const priv = process.env.PDA_TRANSLATIONS || path.join(PATHS.data, 'translations-ar.json');
+  return fs.existsSync(priv) ? priv : path.join(__dirname, 'translations-sample.json');
 }
 
 function open(file) {
@@ -78,7 +80,7 @@ function open(file) {
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = OFF; PRAGMA cache_size = -262144; PRAGMA mmap_size = 1073741824; PRAGMA temp_store = MEMORY;');
   db.exec(SCHEMA);
   seedMaster(db);
-  require('./translate').seed(db, path.join(__dirname, 'translations-ar.json'));
+  require('./translate').seed(db, translationsFile());
   return db;
 }
 
@@ -97,15 +99,8 @@ function seedMaster(db) {
   for (const [ar, en] of D.SAFETY_ITEMS) s.run(normKey(ar), ar, en);
   const t = db.prepare('INSERT INTO templates(name,data_type,source,sheet_hint,priority,exclusive,required,field_map,builtin,created_at) VALUES(?,?,?,?,?,?,?,?,1,?)');
   for (const x of D.TEMPLATES) t.run(x.name, x.data_type, x.source || null, x.sheet_hint || '', x.priority || 0, x.exclusive || null, JSON.stringify(x.required), JSON.stringify(x.field_map), new Date().toISOString());
-  const u = db.prepare('INSERT OR REPLACE INTO users(username,salt,hash,role) VALUES(?,?,?,?)');
-  if (process.env.PDA_ADMIN_USER && process.env.PDA_ADMIN_PIN) {
-    // cloud / first start: one admin user from environment variables, viewing requires sign-in
-    const a = hashPassword(process.env.PDA_ADMIN_PIN); u.run(process.env.PDA_ADMIN_USER, a.salt, a.hash, 'admin');
-    db.prepare('INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)').run('requireLogin', 'true');
-  } else {
-    const a = hashPassword('admin'); u.run('admin', a.salt, a.hash, 'admin');
-    const v = hashPassword('viewer'); u.run('viewer', v.salt, v.hash, 'viewer');
-  }
+  // No user accounts are created here: there are no built-in passwords. The administrator comes from the
+  // PDA_ADMIN_USER / PDA_ADMIN_PIN secrets when the server starts (see auth.js, ensureAdmin).
 }
 
 function getSettings(db) {
@@ -133,4 +128,4 @@ function tx(db, fn) {
   try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
-module.exports = { PATHS, open, getSettings, setSetting, master, tx, hashPassword };
+module.exports = { PATHS, open, getSettings, setSetting, master, tx, hashPassword, translationsFile };
